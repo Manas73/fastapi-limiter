@@ -11,6 +11,7 @@ class RateLimiter:
     def __init__(
         self,
         times: conint(ge=0) = 1,
+        hard_limit: conint(ge=0) = 0,
         milliseconds: conint(ge=-1) = 0,
         seconds: conint(ge=-1) = 0,
         minutes: conint(ge=-1) = 0,
@@ -19,13 +20,18 @@ class RateLimiter:
         callback: Optional[Callable] = None,
     ):
         self.times = times
-        self.milliseconds = milliseconds + 1000 * seconds + 60000 * minutes + 3600000 * hours
+        self.hard_limit = hard_limit
+        self.milliseconds = (
+            milliseconds + 1000 * seconds + 60000 * minutes + 3600000 * hours
+        )
         self.identifier = identifier
         self.callback = callback
 
     async def __call__(self, request: Request, response: Response):
         if not FastAPILimiter.redis:
-            raise Exception("You must call FastAPILimiter.init in startup event of fastapi!")
+            raise Exception(
+                "You must call FastAPILimiter.init in startup event of fastapi!"
+            )
         index = 0
         for route in request.app.routes:
             if route.path == request.scope["path"]:
@@ -40,7 +46,9 @@ class RateLimiter:
         rate_key = await identifier(request)
         key = f"{FastAPILimiter.prefix}:{rate_key}:{index}"
         pexpire = await redis.evalsha(
-            FastAPILimiter.lua_sha, keys=[key], args=[self.times, self.milliseconds]
+            FastAPILimiter.lua_sha,
+            keys=[key],
+            args=[self.times, self.hard_limit, self.milliseconds],
         )
         if pexpire != 0:
             return await callback(request, response, pexpire)
